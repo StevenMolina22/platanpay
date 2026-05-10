@@ -1,5 +1,6 @@
 {
   "project-name": "<Platan Pay>",
   "project-oneliner-spanish": "<Tu agente IA personal que busca, compara y ejecuta compras online en Latinoamérica por vos, con control humano explícito y total transparencia.>",
-  "project-description-spanish": "<Platandpay es un sistema multi-agente de IA diseñado para resolver el dolor de las compras online en LatAm (principalmente Argentina y Chile)>"
+  "project-description-spanish": "<Platandpay es un sistema multi-agente de IA diseñado para resolver el dolor de las compras online en LatAm (principalmente Argentina y Chile)>",
+  "deploy-url": "https://platanus-hack-26-ar-team-26.vercel.app/"
 }

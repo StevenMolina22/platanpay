@@ -37,3 +37,17 @@ The agent runs an internal loop (max 6 iterations per turn) to complete multi-st
 1. User provides a product list, a minimum discount threshold, and a total budget.
 2. Agent interprets this as pre-authorization: searches every item, filters those that meet the threshold, and simulates purchases as long as the budget holds — no per-item approval needed.
 3. Returns a full summary: what was bought, what was skipped, total spent, and total savings.
+
+---
+
+## Track
+
+🤑 Agentic Money
+
+## Team
+
+- Barbara Olivera ([@barolivera](https://github.com/barolivera))
+- Enzo Leonardo Cagliero ([@leocagli](https://github.com/leocagli))
+- Fede Tavano ([@tavanofede-png](https://github.com/tavanofede-png))
+- Steven Molina ([@StevenMolina22](https://github.com/StevenMolina22))
+- Elisa Araya ([@mariaelisaaraya](https://github.com/mariaelisaaraya))
