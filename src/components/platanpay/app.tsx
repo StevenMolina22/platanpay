@@ -17,7 +17,7 @@ import {
   type PlatanPayState,
   type ViewName,
 } from "@/lib/platanpay-state";
-import { getOfferImageSource, productFallbackUrl } from "@/lib/product-icons";
+import { getOfferImageSource, getOfferEmoji } from "@/lib/product-icons";
 
 const navItems: Array<{ view: ViewName; label: string; icon: string }> = [
   { view: "dashboard", label: "Mi Perfil", icon: "👤" },
@@ -976,17 +976,31 @@ function OfferImage({ offer, className }: { offer: Offer; className: string }) {
   const [failed, setFailed] = useState(false);
   if (offer.image && !offer.image.startsWith("<")) return <span className={className}>{offer.image}</span>;
 
-  const src = failed ? productFallbackUrl(offer.product) : getOfferImageSource(offer);
+  const src = getOfferImageSource(offer);
+  if (failed || !src) return <OfferImagePlaceholder offer={offer} className={className} />;
+
   return (
     <span className={className}>
-      <Image
+      {/* Merchant image hosts are dynamic, so next/image remotePatterns cannot cover them safely. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
         src={src}
         alt={offer.product}
-        width={300}
-        height={300}
         className="h-full w-full rounded-[inherit] object-cover"
+        loading="lazy"
         onError={() => setFailed(true)}
       />
+    </span>
+  );
+}
+
+function OfferImagePlaceholder({ offer, className }: { offer: Offer; className: string }) {
+  const emoji = getOfferEmoji(offer);
+  return (
+    <span className={`${className} relative bg-gradient-to-br from-slate-50 to-slate-100`}>
+      <span className="relative flex h-full w-full items-center justify-center rounded-[inherit]">
+        <span className="text-[1.6em] leading-none select-none">{emoji}</span>
+      </span>
     </span>
   );
 }
