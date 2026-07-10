@@ -37,7 +37,7 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
   {
     name: "simulate_purchase",
     description:
-      "SIMULA (no compra de verdad) la compra de un producto. SOLO podés llamarla cuando el usuario haya dado aprobación EXPLÍCITA en su último mensaje (palabras como 'sí', 'dale', 'aprobado', 'confirmo', 'ok comprá'). Para compras > $50.000 ARS el usuario además debe haber citado el monto exacto en su mensaje (ej: 'confirmo $89.990'). NUNCA la llames de manera proactiva ni 'por las dudas'. Si dudás, NO la llames y pedí confirmación al usuario.",
+      "SIMULA (no compra de verdad) la compra de un producto. SOLO podés llamarla cuando el usuario haya dado aprobación EXPLÍCITA en su último mensaje (palabras como 'sí', 'dale', 'apruebo', 'aprobado', 'confirmo', 'autorizo', 'ok comprá'). No le exijas repetir producto, tienda ni precio si ya hay una propuesta vigente en la conversación. NUNCA la llames de manera proactiva ni 'por las dudas'. Si dudás, NO la llames y pedí confirmación al usuario.",
     input_schema: {
       type: "object",
       properties: {
@@ -64,13 +64,16 @@ const APPROVAL_PATTERNS = [
   /\bsi\b/i,
   /\bsí\b/i,
   /\bdale\b/i,
+  /\bapruebo\b/i,
   /\baprobado\b/i,
   /\baprob[áa]\b/i,
   /\bconfirmo\b/i,
   /\bconfirmado\b/i,
+  /\bautorizo\b/i,
   /\bok\b/i,
   /\bdaledale\b/i,
   /\bcomp[rr][áa]?\b/i,
+  /\bmandale\b/i,
   /\badelante\b/i,
 ];
 
@@ -80,14 +83,6 @@ export function userApprovedExplicitly(text: string): boolean {
   // Negaciones explícitas tienen prioridad
   if (/\b(no|cancelar|cancela|pará|pare|stop)\b/i.test(lower)) return false;
   return APPROVAL_PATTERNS.some((re) => re.test(lower));
-}
-
-/** Checks that the user's message contains the purchase amount (double-confirmation for high-value items). */
-export function userCitedAmount(text: string, amount: number): boolean {
-  if (!text) return false;
-  // Strip formatting chars so "$89.990", "89,990", "89990" all match
-  const normalized = text.replace(/[$.\s]/g, "");
-  return normalized.includes(Math.round(amount).toString());
 }
 
 export async function executeTool(
@@ -147,16 +142,6 @@ export async function executeTool(
       }
 
       const total = product.price * quantity;
-
-      // Guardia 2: compras > $50.000 requieren que el usuario cite el monto exacto
-      const HIGH_VALUE_THRESHOLD = 50_000;
-      if (total > HIGH_VALUE_THRESHOLD && !userCitedAmount(ctx.lastUserMessage, total)) {
-        return {
-          ok: false,
-          error: "missing_double_confirmation",
-          message: `Compra de alto valor ($${total.toLocaleString("es-AR")}). El usuario debe confirmar citando el monto exacto antes de proceder. Preguntale: "¿Confirmás $${total.toLocaleString("es-AR")} en total?"`,
-        };
-      }
 
       const receipt: PurchaseReceipt = {
         ok: true,

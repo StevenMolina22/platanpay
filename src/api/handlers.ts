@@ -2,6 +2,7 @@ import { runAgentTurn, type AgentMessage, type AgentTurnResult } from "@/lib/age
 import { PRODUCTS, searchProducts } from "@/mocks/products";
 import { scoreProducts } from "@/lib/scoring";
 import { countSessions, deleteSession, getSessionMessages, saveSessionMessages } from "@/db/sessions";
+import type { ScoredProduct } from "@/lib/types";
 
 export async function getHealth() {
   return { ok: true, agent: "PlatandPay 🍌", sessions: await countSessions() };
@@ -30,6 +31,12 @@ export async function handleChat(input: unknown) {
 
   try {
     const result = await runConfiguredAgentTurn(history);
+    // When the agent reuses cached results (no tool call this turn) and made no purchase,
+    // surface the most recent search results from history so the frontend panel stays in sync.
+    if (!result.proposals?.length && !result.purchaseReceipts?.length) {
+      const cached = extractLatestSearchResultsFromHistory(history);
+      if (cached.length) result.proposals = cached;
+    }
     await saveSessionMessages(sessionId, history);
     return { status: 200, body: serializeAgentResult(result) };
   } catch (err: unknown) {
@@ -81,7 +88,7 @@ async function runConfiguredAgentTurn(history: AgentMessage[]): Promise<AgentTur
   const lastUser = [...history].reverse().find((m) => m.role === "user");
   const lastUserText = typeof lastUser?.content === "string" ? lastUser.content : "";
   const proposals = scoreProducts(searchProducts(inferMockProductQuery(lastUserText))).slice(0, 10);
-  const approved = /\b(si|sí|dale|aprobado|confirmo|ok)\b/i.test(lastUserText);
+  const approved = /\b(si|sí|dale|apruebo|aprobado|confirmo|autorizo|ok|mandale)\b/i.test(lastUserText);
   const purchaseReceipts =
     approved && proposals[0]
       ? [
@@ -119,4 +126,47 @@ function inferMockProductQuery(text: string): string {
   const tags = new Set(PRODUCTS.flatMap((product) => product.tags));
   const matched = [...tags].find((tag) => normalized.includes(tag));
   return matched ?? normalized.split(/\s+/).find((part) => part.length > 3) ?? normalized;
+}
+
+/**
+ * Scans conversation history backwards to find the most recent
+ * search_and_score_products tool result, so the frontend panel stays
+ * in sync when the agent reuses cached results without re-calling the tool.
+ */
+function extractLatestSearchResultsFromHistory(history: AgentMessage[]): ScoredProduct[] {
+  // Build map of tool_use_id → tool_name from all assistant messages
+  const toolNames = new Map<string, string>();
+  for (const msg of history) {
+    if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      for (const block of msg.content as Array<{ type: string; id?: string; name?: string }>) {
+        if (block.type === "tool_use" && block.id && block.name) {
+          toolNames.set(block.id, block.name);
+        }
+      }
+    }
+  }
+
+  // Scan backwards for the most recent search_and_score_products result
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg.role !== "user" || !Array.isArray(msg.content)) continue;
+    for (const block of msg.content as Array<{ type: string; tool_use_id?: string; content?: string }>) {
+      if (
+        block.type === "tool_result" &&
+        block.tool_use_id &&
+        toolNames.get(block.tool_use_id) === "search_and_score_products" &&
+        typeof block.content === "string"
+      ) {
+        try {
+          const parsed = JSON.parse(block.content) as { ok: boolean; results: ScoredProduct[] };
+          if (parsed.ok && Array.isArray(parsed.results) && parsed.results.length > 0) {
+            return parsed.results;
+          }
+        } catch {
+          // malformed result, keep scanning
+        }
+      }
+    }
+  }
+  return [];
 }

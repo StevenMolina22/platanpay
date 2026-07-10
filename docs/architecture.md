@@ -55,9 +55,9 @@ Usuario ──► API/CLI ──► runAgentTurn(history)
 
 La aprobación se valida en **dos lugares**:
 
-1. **System prompt**: el modelo tiene instrucciones explícitas para nunca llamar `simulate_purchase` sin aprobación previa, y debe pasar `user_confirmation_quote` con el texto exacto que cita la aprobación.
+1. **System prompt**: el modelo tiene instrucciones explícitas para nunca llamar `simulate_purchase` sin aprobación previa. Si ya presentó una propuesta clara, una confirmación corta como "apruebo" alcanza.
 
-2. **Runtime guard** (`tools.ts::userApprovedExplicitly`): chequea el último mensaje del usuario contra patrones (`sí`, `dale`, `aprobado`, `confirmo`, `ok`, etc.) y descarta negaciones explícitas (`no`, `cancelar`, `pará`). Si no hay aprobación, la herramienta devuelve `{ok: false, error: "missing_user_approval"}` y el modelo ve que falló y debe volver a pedirla.
+2. **Runtime guard** (`tools.ts::userApprovedExplicitly`): chequea el último mensaje del usuario contra patrones (`sí`, `dale`, `apruebo`, `aprobado`, `confirmo`, `autorizo`, `ok`, etc.) y descarta negaciones explícitas (`no`, `cancelar`, `pará`). Si no hay aprobación, la herramienta devuelve `{ok: false, error: "missing_user_approval"}` y el modelo ve que falló y debe volver a pedirla.
 
 Esto es defensa en profundidad: el prompt podría fallar (jailbreak), pero el runtime no.
 

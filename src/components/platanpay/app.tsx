@@ -35,8 +35,9 @@ export function PlatanPayApp() {
   const [activeView, setActiveView] = useState<ViewName>("dashboard");
   const [detailOfferId, setDetailOfferId] = useState<string | null>(null);
   const [approvalOpen, setApprovalOpen] = useState(false);
-  const [successSavings, setSuccessSavings] = useState<number | null>(null);
+  const [successData, setSuccessData] = useState<{ savings: number; receiptId?: string; paymentMethod: string; items: Offer[] } | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [isPaymentPending, setIsPaymentPending] = useState(false);
 
   useEffect(() => {
     savePlatanPayState(state);
@@ -116,8 +117,12 @@ export function PlatanPayApp() {
       const result = await sendChatTurn(getBackendSessionId(), value);
       setState((previous) => ({
         ...previous,
-        offers: result.proposals?.length ? result.proposals.map(mapProposalToOffer) : previous.offers,
-        selectedOfferIds: result.proposals?.length ? [] : previous.selectedOfferIds,
+        offers: result.proposals?.length
+          ? result.proposals.map(mapProposalToOffer)
+          : result.purchaseReceipts?.length
+            ? []
+            : previous.offers,
+        selectedOfferIds: result.proposals?.length || result.purchaseReceipts?.length ? [] : previous.selectedOfferIds,
         chatMessages: [
           ...previous.chatMessages.filter((messageItem) => messageItem.id !== loadingId),
           {
@@ -144,18 +149,18 @@ export function PlatanPayApp() {
     }
   }
 
-  async function confirmPurchase() {
+  async function confirmPurchase(paymentMethod: string) {
     if (selectedOffers.length === 0 || isSending) return;
     setApprovalOpen(false);
 
     const first = selectedOffers[0];
+    const itemsSnapshot = [...selectedOffers];
     const totalSavings = selectedOffers.reduce((sum, offer) => sum + offer.savings, 0);
     const totalPaid = selectedOffers.reduce((sum, offer) => sum + offer.price, 0);
-    const approvalMessage = `Sí, apruebo explícitamente la compra de ${first.product} en ${first.store} por $${formatArs(
-      first.price,
-    )}. Producto ${first.backendProductId || first.product}, tienda ${first.backendStoreId || first.store}.`;
+    const approvalMessage = "Apruebo";
 
     setIsSending(true);
+    setIsPaymentPending(true);
     try {
       const result = await sendChatTurn(getBackendSessionId(), approvalMessage);
       const receipt = result.purchaseReceipts?.[0];
@@ -176,6 +181,7 @@ export function PlatanPayApp() {
           },
           ...previous.historial,
         ],
+        offers: [],
         selectedOfferIds: [],
         chatMessages: [
           ...previous.chatMessages,
@@ -183,7 +189,7 @@ export function PlatanPayApp() {
           { id: createId("msg"), role: "agent", content: receipt?.message || result.reply || "Compra simulada registrada." },
         ],
       }));
-      setSuccessSavings(totalSavings);
+      setSuccessData({ savings: totalSavings, receiptId: receipt?.receiptId, paymentMethod, items: itemsSnapshot });
       launchConfetti();
     } catch (error) {
       const messageText = error instanceof Error ? error.message : "No se pudo confirmar la compra.";
@@ -193,6 +199,7 @@ export function PlatanPayApp() {
       }));
     } finally {
       setIsSending(false);
+      setIsPaymentPending(false);
     }
   }
 
@@ -249,13 +256,14 @@ export function PlatanPayApp() {
         />
       )}
       {approvalOpen && (
-        <ApprovalModal selectedOffers={selectedOffers} isSending={isSending} onClose={() => setApprovalOpen(false)} onConfirm={confirmPurchase} />
+        <ApprovalModal selectedOffers={selectedOffers} onClose={() => setApprovalOpen(false)} onConfirm={confirmPurchase} />
       )}
-      {successSavings !== null && (
+      {isPaymentPending && <ProcessingModal />}
+      {successData !== null && (
         <SuccessModal
-          savings={successSavings}
+          data={successData}
           onClose={() => {
-            setSuccessSavings(null);
+            setSuccessData(null);
             setActiveView("dashboard");
           }}
         />
@@ -791,87 +799,211 @@ function OfferDetailModal({ offer, selected, onClose, onAdd }: { offer: Offer; s
   );
 }
 
+const PAYMENT_METHODS = [
+  { id: "mercadopago", label: "Mercado Pago", icon: "💳", description: "Pagá con tu saldo o cuotas sin interés" },
+  { id: "credito", label: "Tarjeta de crédito", icon: "💳", description: "Visa, Mastercard, American Express" },
+  { id: "debito", label: "Tarjeta de débito", icon: "🏦", description: "Débito inmediato de tu cuenta" },
+  { id: "modo", label: "MODO", icon: "📱", description: "App de pagos interoperables" },
+] as const;
+
+type PaymentMethodId = (typeof PAYMENT_METHODS)[number]["id"];
+
 function ApprovalModal({
   selectedOffers,
-  isSending,
   onClose,
   onConfirm,
 }: {
   selectedOffers: Offer[];
-  isSending: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (paymentMethod: string) => void;
 }) {
+  const [step, setStep] = useState<"review" | "payment">("review");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodId>("mercadopago");
+
   const total = selectedOffers.reduce((sum, offer) => sum + offer.price, 0);
   const totalSavings = selectedOffers.reduce((sum, offer) => sum + offer.savings, 0);
+  const selectedMethodLabel = PAYMENT_METHODS.find((m) => m.id === paymentMethod)?.label ?? paymentMethod;
 
   return (
     <Modal onClose={onClose} zIndex="z-[70]">
-      <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
-        <div className="p-7">
-          <div className="mb-5 flex justify-between">
-            <div>
-              <h2 className="text-2xl font-extrabold">Revisar propuesta</h2>
-              <div className="text-sm text-slate-500">Confirmá antes de pagar con Mercado Pago</div>
+      <div className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
+        {/* Step indicator */}
+        <div className="flex items-center gap-2 border-b bg-slate-50 px-7 py-3">
+          {(["review", "payment"] as const).map((s, i) => (
+            <div key={s} className="flex items-center gap-2">
+              {i > 0 && <div className="h-px w-6 bg-slate-300" />}
+              <div className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black ${step === s || (s === "review") ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-500"}`}>
+                {i + 1}
+              </div>
+              <span className={`text-xs font-semibold ${step === s ? "text-slate-800" : "text-slate-400"}`}>
+                {s === "review" ? "Resumen" : "Pago"}
+              </span>
             </div>
-            <button type="button" onClick={onClose} className="text-2xl text-slate-400 hover:text-slate-600">×</button>
-          </div>
-          <div className="mb-5 max-h-[220px] space-y-3 overflow-auto pr-2 text-sm">
-            {selectedOffers.map((offer) => (
-              <div key={offer.id} className="flex items-center gap-4 rounded-2xl border border-slate-100 bg-white p-3.5">
-                <OfferImage offer={offer} className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-50 text-2xl" />
-                <div className="flex-1 text-sm">
-                  <div className="font-extrabold">{offer.product}</div>
-                  <div className="text-xs text-emerald-600">{offer.store}</div>
-                  <div className="mt-2 flex items-center justify-between">
-                    <div><span className="font-mono text-xl font-extrabold">${formatArs(offer.price)}</span> <span className="price-old text-xs">${formatArs(offer.originalPrice)}</span></div>
-                    <div className="discount-badge">-{offer.discount}%</div>
+          ))}
+        </div>
+
+        {step === "review" && (
+          <>
+            <div className="p-7">
+              <div className="mb-5 flex justify-between">
+                <div>
+                  <h2 className="text-2xl font-extrabold">Revisar propuesta</h2>
+                  <div className="text-sm text-slate-500">{selectedOffers.length} {selectedOffers.length === 1 ? "producto" : "productos"} seleccionados</div>
+                </div>
+                <button type="button" onClick={onClose} className="text-2xl text-slate-400 hover:text-slate-600">×</button>
+              </div>
+              <div className="mb-5 max-h-[220px] space-y-3 overflow-auto pr-2">
+                {selectedOffers.map((offer) => (
+                  <div key={offer.id} className="flex items-center gap-4 rounded-2xl border border-slate-100 bg-white p-3.5">
+                    <OfferImage offer={offer} className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-50 text-2xl" />
+                    <div className="flex-1 text-sm">
+                      <div className="font-extrabold">{offer.product}</div>
+                      <div className="text-xs text-emerald-600">{offer.store}</div>
+                      <div className="mt-1.5 flex items-center justify-between">
+                        <div><span className="font-mono text-lg font-extrabold">${formatArs(offer.price)}</span>{" "}<span className="price-old text-xs">${formatArs(offer.originalPrice)}</span></div>
+                        {offer.discount > 0 && <div className="discount-badge">-{offer.discount}%</div>}
+                      </div>
+                    </div>
                   </div>
+                ))}
+              </div>
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
+                <div className="mb-2 flex justify-between text-sm">
+                  <span className="text-emerald-700">Total a pagar</span>
+                  <span className="font-mono text-lg font-extrabold">${formatArs(total)}</span>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm font-semibold text-emerald-700">Ahorro total</span>
+                  <span className="text-3xl font-extrabold tracking-tighter text-emerald-600">${formatArs(totalSavings)}</span>
                 </div>
               </div>
-            ))}
-          </div>
-          <div className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
-            <div className="mb-2 flex justify-between text-sm">
-              <span className="text-emerald-700">Total a pagar hoy</span>
-              <span className="font-mono text-lg font-extrabold">${formatArs(total)}</span>
             </div>
-            <div className="flex items-baseline justify-between">
-              <span className="font-semibold text-emerald-700">Ahorro total con esta propuesta</span>
-              <span className="text-3xl font-extrabold tracking-tighter text-emerald-600">${formatArs(totalSavings)}</span>
+            <div className="flex gap-3 border-t bg-slate-50 p-5">
+              <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-slate-300 bg-white py-3.5 text-sm font-semibold hover:bg-slate-50">Cancelar</button>
+              <button
+                type="button"
+                onClick={() => setStep("payment")}
+                disabled={selectedOffers.length === 0}
+                className="platanpay-btn flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-500 py-3.5 text-sm font-extrabold text-white hover:bg-emerald-600 disabled:opacity-60"
+              >
+                Elegir método de pago →
+              </button>
             </div>
-          </div>
-        </div>
-        <div className="flex gap-3 rounded-b-3xl border-t bg-white p-5">
-          <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-slate-300 py-3.5 text-sm font-semibold">Cancelar</button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={isSending || selectedOffers.length === 0}
-            className="platanpay-btn flex flex-1 items-center justify-center gap-x-2 rounded-2xl bg-emerald-500 py-3.5 text-sm font-extrabold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSending ? "Confirmando..." : "Confirmar y pagar con Mercado Pago 🔒"}
-          </button>
-        </div>
+          </>
+        )}
+
+        {step === "payment" && (
+          <>
+            <div className="p-7">
+              <div className="mb-5 flex justify-between">
+                <div>
+                  <h2 className="text-2xl font-extrabold">Método de pago</h2>
+                  <div className="text-sm text-slate-500">Total a pagar: <span className="font-bold text-slate-700">${formatArs(total)}</span></div>
+                </div>
+                <button type="button" onClick={onClose} className="text-2xl text-slate-400 hover:text-slate-600">×</button>
+              </div>
+              <div className="space-y-2.5">
+                {PAYMENT_METHODS.map((method) => (
+                  <button
+                    key={method.id}
+                    type="button"
+                    onClick={() => setPaymentMethod(method.id)}
+                    className={`flex w-full items-center gap-4 rounded-2xl border-2 p-4 text-left transition-all ${
+                      paymentMethod === method.id
+                        ? "border-emerald-400 bg-emerald-50"
+                        : "border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="text-2xl">{method.icon}</span>
+                    <div className="flex-1">
+                      <div className="font-extrabold text-slate-800">{method.label}</div>
+                      <div className="text-xs text-slate-500">{method.description}</div>
+                    </div>
+                    <div className={`h-4 w-4 flex-shrink-0 rounded-full border-2 ${paymentMethod === method.id ? "border-emerald-500 bg-emerald-500" : "border-slate-300"}`} />
+                  </button>
+                ))}
+              </div>
+              <div className="mt-4 flex items-center gap-2 rounded-xl bg-slate-50 px-4 py-2.5 text-xs text-slate-500">
+                <span>🔒</span>
+                <span>Pago 100% simulado — ningún cargo real será efectuado</span>
+              </div>
+            </div>
+            <div className="flex gap-3 border-t bg-slate-50 p-5">
+              <button type="button" onClick={() => setStep("review")} className="flex-1 rounded-2xl border border-slate-300 bg-white py-3.5 text-sm font-semibold hover:bg-slate-50">← Volver</button>
+              <button
+                type="button"
+                onClick={() => onConfirm(paymentMethod)}
+                className="platanpay-btn flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-500 py-3.5 text-sm font-extrabold text-white hover:bg-emerald-600"
+              >
+                🔒 Confirmar con {selectedMethodLabel}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   );
 }
 
-function SuccessModal({ savings, onClose }: { savings: number; onClose: () => void }) {
+function ProcessingModal() {
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 backdrop-blur-md">
+      <div className="flex w-full max-w-xs flex-col items-center gap-5 rounded-3xl bg-white p-10 text-center shadow-2xl">
+        <div className="relative flex h-16 w-16 items-center justify-center">
+          <div className="absolute inset-0 animate-spin rounded-full border-4 border-emerald-100 border-t-emerald-500" />
+          <span className="text-2xl">🍌</span>
+        </div>
+        <div>
+          <div className="text-lg font-extrabold">Procesando pago...</div>
+          <div className="mt-1 text-sm text-slate-500">El agente está confirmando tu compra</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SuccessModal({ data, onClose }: { data: { savings: number; receiptId?: string; paymentMethod: string; items: Offer[] }; onClose: () => void }) {
+  const methodLabel = PAYMENT_METHODS.find((m) => m.id === data.paymentMethod)?.label ?? data.paymentMethod;
   return (
     <Modal onClose={onClose} zIndex="z-[80]" dark>
-      <div className="w-full max-w-md rounded-3xl bg-white p-9 text-center shadow-2xl">
-        <div className="success-check mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-6xl text-emerald-500">✓</div>
-        <h2 className="mb-2 text-4xl font-extrabold tracking-tight">¡Compra aprobada!</h2>
-        <div className="mb-6 text-lg font-semibold text-emerald-600">Pagaste con Mercado Pago • Ahorraste <span className="font-extrabold">${formatArs(savings)}</span></div>
-        <div className="mb-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-left text-sm text-emerald-700">
-          Recibirás confirmación por email y WhatsApp.<br />
-          Tus productos llegarán en 24-48 horas.
+      <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl">
+        <div className="p-9 text-center">
+          <div className="success-check mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-5xl text-emerald-500">✓</div>
+          <h2 className="mb-1 text-4xl font-extrabold tracking-tight">¡Compra aprobada!</h2>
+          <p className="mb-6 text-base text-slate-500">Pagaste con <span className="font-bold text-slate-700">{methodLabel}</span></p>
+
+          {/* Items */}
+          <div className="mb-4 space-y-2 text-left">
+            {data.items.map((offer) => (
+              <div key={offer.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-2.5 text-sm">
+                <div className="flex items-center gap-3">
+                  <OfferImage offer={offer} className="flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-lg" />
+                  <span className="font-semibold text-slate-700 line-clamp-1">{offer.product}</span>
+                </div>
+                <span className="font-mono font-bold">${formatArs(offer.price)}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Savings highlight */}
+          <div className="mb-4 rounded-2xl border border-emerald-100 bg-emerald-50 px-5 py-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Ahorro total</div>
+            <div className="text-4xl font-extrabold tracking-tighter text-emerald-600">${formatArs(data.savings)}</div>
+          </div>
+
+          {/* Receipt */}
+          {data.receiptId && (
+            <div className="mb-5 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-left text-xs text-slate-500">
+              <span className="font-semibold text-slate-600">Comprobante:</span> <span className="font-mono">{data.receiptId}</span>
+              <br />Recibirás confirmación por email y WhatsApp en 24–48 hs.
+            </div>
+          )}
         </div>
-        <button type="button" onClick={onClose} className="w-full rounded-2xl bg-yellow-400 py-4 text-sm font-extrabold text-black hover:bg-yellow-500 active:scale-[0.985]">
-          Volver al Dashboard
-        </button>
+        <div className="border-t p-5">
+          <button type="button" onClick={onClose} className="w-full rounded-2xl bg-yellow-400 py-4 text-sm font-extrabold text-black hover:bg-yellow-500 active:scale-[0.985]">
+            Volver al Dashboard
+          </button>
+        </div>
       </div>
     </Modal>
   );

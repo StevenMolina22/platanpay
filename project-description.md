@@ -17,7 +17,7 @@ Built on Claude (Opus 4.7) with a persistent conversation history and prompt cac
 Two tools are exposed:
 
 - **`search_and_score_products`** — searches live or mock product data and returns up to 8 results scored 0–100 across price, discount, store reputation, stock, shipping, and payment methods.
-- **`simulate_purchase`** — simulates a checkout. It is guarded: the agent checks the user's last message for explicit approval keywords before calling it. Purchases over $50,000 ARS require the user to also quote the exact amount.
+- **`simulate_purchase`** — simulates a checkout. It is guarded: the agent checks the user's last message for explicit approval keywords before calling it. A short approval like "apruebo" or "dale" is enough when the current proposal is clear.
 
 The agent runs an internal loop (max 6 iterations per turn) to complete multi-step reasoning and tool calls before responding.
 
@@ -29,7 +29,7 @@ The agent runs an internal loop (max 6 iterations per turn) to complete multi-st
 
 1. User describes what they want.
 2. Agent calls `search_and_score_products`, presents the 3 best options with scores and reasoning.
-3. User explicitly approves ("dale", "sí", "confirmado").
+3. User explicitly approves ("dale", "sí", "apruebo", "confirmado").
 4. Agent calls `simulate_purchase` and returns a mock receipt.
 
 **Autonomous mode (watchlist):**

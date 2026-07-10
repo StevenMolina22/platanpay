@@ -143,10 +143,7 @@ confirmPurchase = async function confirmPurchaseIntegrated() {
   if (selected.length === 0) return;
   hideApprovalModal();
 
-  const first = selected[0];
-  const approvalMessage = `Sí, apruebo explícitamente la compra de ${first.product} en ${first.store} por $${formatArs(
-    first.price,
-  )}. Producto ${first.backendProductId || first.product}, tienda ${first.backendStoreId || first.store}.`;
+  const approvalMessage = "Apruebo";
 
   try {
     const result = await callBackend(approvalMessage);
